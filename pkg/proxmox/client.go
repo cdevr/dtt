@@ -8,24 +8,24 @@ import (
 	"strings"
 	"time"
 
+	sshpkg "github.com/cdevr/dtt/pkg/ssh"
 	proxmox "github.com/luthermonson/go-proxmox"
-	sshpkg "github.com/example/dtt/pkg/ssh"
 )
 
 // ClientConfig contains configuration for Proxmox API client
 type ClientConfig struct {
-	Host         string
-	Port         int
-	Username     string
-	Password     string
-	TokenID      string // API token ID (e.g., "root@pam!tokenname")
-	TokenSecret  string // API token secret
-	Realm        string
-	Node         string
-	Insecure     bool
-	SSHUser      string // SSH username for Proxmox host (for image operations)
-	SSHPassword  string // SSH password for Proxmox host
-	SSHPort      int    // SSH port (default 22)
+	Host        string
+	Port        int
+	Username    string
+	Password    string
+	TokenID     string // API token ID (e.g., "root@pam!tokenname")
+	TokenSecret string // API token secret
+	Realm       string
+	Node        string
+	Insecure    bool
+	SSHUser     string // SSH username for Proxmox host (for image operations)
+	SSHPassword string // SSH password for Proxmox host
+	SSHPort     int    // SSH port (default 22)
 }
 
 // Client represents a Proxmox API client
@@ -69,7 +69,6 @@ func (c *Client) Connect() error {
 	if !strings.Contains(serverURL, "/api2/json") {
 		serverURL = serverURL + "/api2/json"
 	}
-
 
 	// Create Proxmox client
 	var client *proxmox.Client

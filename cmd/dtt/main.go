@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/example/dtt/cmd/dtt/commands"
+	"github.com/cdevr/dtt/cmd/dtt/commands"
 )
 
 var version = "0.1.0"

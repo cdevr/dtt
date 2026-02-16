@@ -1,4 +1,4 @@
-module github.com/example/dtt
+module github.com/cdevr/dtt
 
 go 1.24.0
 

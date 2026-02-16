@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/example/dtt/pkg/proxmox"
+	"github.com/cdevr/dtt/pkg/proxmox"
 	"github.com/spf13/cobra"
 )
 
@@ -16,7 +16,6 @@ func NewRunCommand() *cobra.Command {
 		Long: `Run a Linux binary on a Proxmox VM. The binary will be uploaded and executed.
 This command handles image provisioning, VM creation, and binary execution.`,
 		Args: cobra.MinimumNArgs(2),
-		RunE: command_run,
 	}
 
 	// Add flags specific to run command

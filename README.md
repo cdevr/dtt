@@ -127,7 +127,7 @@ DTT is organized as a Go module with separate packages for different functionali
 ### Proxmox Client
 
 ```go
-import "github.com/example/dtt/pkg/proxmox"
+import "github.com/cdevr/dtt/pkg/proxmox"
 
 client := proxmox.NewClient(proxmox.ClientConfig{
     Host:     "proxmox.example.com",
@@ -151,7 +151,7 @@ vm, err := client.CreateVM(vmSpec)
 ### Cloud-Init Configuration
 
 ```go
-import "github.com/example/dtt/pkg/cloudconfig"
+import "github.com/cdevr/dtt/pkg/cloudconfig"
 
 config := cloudconfig.NewBuilder().
     WithHostname("my-vm").
@@ -167,7 +167,7 @@ userDataYAML := config.Generate()
 ### Binary Management
 
 ```go
-import "github.com/example/dtt/pkg/binary"
+import "github.com/cdevr/dtt/pkg/binary"
 
 // Get binary information
 info, err := binary.GetBinaryInfo("/path/to/binary")
