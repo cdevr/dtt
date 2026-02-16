@@ -1,0 +1,10 @@
+Build DTT ("do the thing")
+
+Purpose:
+This is a cli program that should take a linux binary and be able to run it on a proxmox VM server.
+
+It should have cli parameters that pass in a linux binary, a VM to run it on, then on the proxmox VM server you should start a given image (download if required, provide default options like debian 11, debian 13, ubuntu 24.04 LTS), use cloud-init to configure it, upload the binary, and start it.
+
+The core functionality should be accessible as a library.
+
+It should be a go program with a go.mod, which tries to follow a standard go style, uses a cli library that ideally supports bash autocomplete, follows conventions with a good codestyle, code well-organised. It should be well-tested where possible.
