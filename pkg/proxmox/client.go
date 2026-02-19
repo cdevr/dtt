@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -40,6 +41,11 @@ func NewClient(config ClientConfig) *Client {
 	return &Client{
 		config: config,
 	}
+}
+
+// APIClient returns the APIClient
+func (c *Client) APIClient() *proxmox.Client {
+	return c.apiClient
 }
 
 // Connect establishes a connection to the Proxmox server
@@ -99,13 +105,13 @@ func (c *Client) Connect() error {
 	if err != nil {
 		return fmt.Errorf("failed to get Proxmox version (connection test failed): %w", err)
 	}
-	fmt.Printf("Connected to Proxmox version %s\n", version.Version)
+	slog.Debug("Connected to Proxmox", "version", version.Version)
 
 	return nil
 }
 
-// getNode gets the Proxmox node, fetching it if necessary
-func (c *Client) getNode() (*proxmox.Node, error) {
+// GetNode gets the Proxmox node, fetching it if necessary
+func (c *Client) GetNode() (*proxmox.Node, error) {
 	if c.node != nil {
 		return c.node, nil
 	}
@@ -199,7 +205,7 @@ func (c *Client) CreateVM(vmSpec VMSpec) (*VM, error) {
 		return nil, fmt.Errorf("failed to connect to Proxmox: %w", err)
 	}
 
-	node, err := c.getNode()
+	node, err := c.GetNode()
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +373,7 @@ func (c *Client) GetVM(vmID int) (*VM, error) {
 		return nil, err
 	}
 
-	node, err := c.getNode()
+	node, err := c.GetNode()
 	if err != nil {
 		return nil, err
 	}
@@ -400,7 +406,7 @@ func (c *Client) StartVM(vmID int) error {
 		return err
 	}
 
-	node, err := c.getNode()
+	node, err := c.GetNode()
 	if err != nil {
 		return err
 	}
@@ -429,7 +435,7 @@ func (c *Client) StopVM(vmID int) error {
 		return err
 	}
 
-	node, err := c.getNode()
+	node, err := c.GetNode()
 	if err != nil {
 		return err
 	}
@@ -458,7 +464,7 @@ func (c *Client) DeleteVM(vmID int) error {
 		return err
 	}
 
-	node, err := c.getNode()
+	node, err := c.GetNode()
 	if err != nil {
 		return err
 	}
@@ -483,7 +489,7 @@ func (c *Client) ListVMs() ([]VM, error) {
 		return nil, err
 	}
 
-	node, err := c.getNode()
+	node, err := c.GetNode()
 	if err != nil {
 		return nil, err
 	}
@@ -746,7 +752,7 @@ func (c *Client) GetVMIPAddress(vmID int) (string, error) {
 		return "", err
 	}
 
-	node, err := c.getNode()
+	node, err := c.GetNode()
 	if err != nil {
 		return "", err
 	}

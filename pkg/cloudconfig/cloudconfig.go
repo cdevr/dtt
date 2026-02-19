@@ -137,3 +137,4 @@ func (b *Builder) WithEnvironment(key, value string) *Builder {
 func (b *Builder) Build() *CloudInitConfig {
 	return b.config
 }
+
