@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
+	"sync"
 	"time"
 
 	"github.com/luthermonson/go-proxmox"
@@ -16,10 +18,75 @@ var (
 		Args:  cobra.MinimumNArgs(1),
 		RunE:  command_vm_rm,
 	}
+
+	FlagVmRmStop *bool
 )
 
 func init() {
 	vmCommand.AddCommand(vmRmCommand)
+
+	FlagVmRmStop = vmRmCommand.PersistentFlags().Bool("stop", false, "stop VMs before removing them")
+}
+
+var (
+	nodeCache = map[string]*proxmox.Node{}
+	vmCache   = map[string]*proxmox.VirtualMachine{}
+)
+
+func WaitOnManyTasks(ctx context.Context, tasks []*proxmox.Task, pollInterval time.Duration, timeout time.Duration) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	errCh := make(chan error, len(tasks))
+	var wg sync.WaitGroup
+	wg.Add(len(tasks))
+
+	for _, task := range tasks {
+		task := task
+		go func() {
+			defer wg.Done()
+			if err := task.Wait(ctx, pollInterval, timeout); err != nil {
+				errCh <- err
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	if err, ok := <-errCh; ok {
+		return err
+	}
+
+	return nil
+}
+
+func getNodeCached(ctx context.Context, pac *proxmox.Client, node string) (*proxmox.Node, error) {
+	if node, ok := nodeCache[node]; ok {
+		return node, nil
+	}
+	result, err := pac.Node(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	nodeCache[node] = result
+	return result, nil
+}
+
+func getVMCached(ctx context.Context, node *proxmox.Node, vmid int) (*proxmox.VirtualMachine, error) {
+	key := fmt.Sprintf("%s:%d", node.Name, vmid)
+	if vm, ok := vmCache[key]; ok {
+		return vm, nil
+	}
+
+	result, err := node.VirtualMachine(ctx, vmid)
+	if err != nil {
+		return nil, err
+	}
+
+	vmCache[key] = result
+	return result, nil
 }
 
 func command_vm_rm(cmd *cobra.Command, args []string) error {
@@ -67,11 +134,39 @@ func command_vm_rm(cmd *cobra.Command, args []string) error {
 
 	tasks := []*proxmox.Task{}
 	for _, r := range toDelete {
-		node, err := pac.Node(ctx, r.Node)
+		node, err := getNodeCached(ctx, pac, r.Node)
 		if err != nil {
 			return fmt.Errorf("failed to get the node to for nodename %q: %s", r.Node, err)
 		}
-		vm, err := node.VirtualMachine(ctx, int(r.VMID))
+		vm, err := getVMCached(ctx, node, int(r.VMID))
+		if err != nil {
+			return fmt.Errorf("failed to get the virtual machine for VMID %q: %w", r.VMID, err)
+		}
+
+		if !vm.IsStopped() {
+			if *FlagVmRmStop {
+				log.Printf("Warning: VM %q (ID %d) is not stopped, adding stop task", vm.Name, vm.VMID)
+				stopTask, err := vm.Stop(ctx)
+				if err != nil {
+					return fmt.Errorf("Error creating stop task for VM %q (ID %d): %w", vm.Name, vm.VMID, err)
+				}
+				tasks = append(tasks, stopTask)
+			} else {
+				log.Printf("Warning: VM %q (ID %d) is not stopped", vm.Name, vm.VMID)
+			}
+		}
+	}
+
+	if err := WaitOnManyTasks(ctx, tasks, time.Second, 2*time.Minute); err != nil {
+		return fmt.Errorf("waiting for delete task failed: %w", err)
+	}
+
+	for _, r := range toDelete {
+		node, err := getNodeCached(ctx, pac, r.Node)
+		if err != nil {
+			return fmt.Errorf("failed to get the node to for nodename %q: %s", r.Node, err)
+		}
+		vm, err := getVMCached(ctx, node, int(r.VMID))
 		if err != nil {
 			return fmt.Errorf("failed to get the virtual machine for VMID %q: %w", r.VMID, err)
 		}
@@ -83,10 +178,9 @@ func command_vm_rm(cmd *cobra.Command, args []string) error {
 		tasks = append(tasks, deleteTask)
 	}
 
-	for _, task := range tasks {
-		if err := task.Wait(ctx, time.Second, 2*time.Minute); err != nil {
-			return fmt.Errorf("waiting for delete task failed: %w", err)
-		}
+	if err := WaitOnManyTasks(ctx, tasks, time.Second, 2*time.Minute); err != nil {
+		return fmt.Errorf("waiting for delete task failed: %w", err)
 	}
+
 	return nil
 }

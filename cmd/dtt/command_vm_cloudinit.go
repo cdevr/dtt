@@ -11,8 +11,10 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"text/tabwriter"
 	"time"
 
+	"github.com/cdevr/dtt/parseCloudInitLog"
 	"github.com/luthermonson/go-proxmox"
 	"github.com/spf13/cobra"
 )
@@ -45,7 +47,7 @@ func init() {
 	FlagVmCloudInitMemory = vmCloudInitCommand.PersistentFlags().Int("memory", 2048, "memory in MB")
 	FlagVmCloudInitCores = vmCloudInitCommand.PersistentFlags().Int("cores", 2, "number of CPU cores")
 	FlagVmCloudInitStorage = vmCloudInitCommand.PersistentFlags().String("storage", "local", "storage for imported disk and cloud-init drive")
-	FlagVmCloudInitRelease = vmCloudInitCommand.PersistentFlags().String("release", "ubuntu:noble", "the version you want, default is ubuntu:noble (can be bionic, focal, jammy, noble, plucky, questing, xenial), can also be debian:bullseye (can be buster, bullseye, bookworm, trixie)")
+	FlagVmCloudInitRelease = vmCloudInitCommand.PersistentFlags().String("release", "ubuntu:noble", "the version you want, default is ubuntu:noble (can be bionic, focal, jammy, noble, plucky, questing, xenial, 22.04, 20.04), can also be debian:bullseye (can be buster, bullseye, bookworm, trixie, 11, 13)")
 	FlagVmCloudInitDiskSize = vmCloudInitCommand.PersistentFlags().String("disk-size", "+10G", "additional size for boot disk resize (e.g. +10G)")
 	FlagVmCloudInitUsername = vmCloudInitCommand.PersistentFlags().String("username", "dtt", "cloud-init username")
 	FlagVmCloudInitPassword = vmCloudInitCommand.PersistentFlags().String("password", "", "cloud-init password")
@@ -124,7 +126,7 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 	}
 	log.Printf("constructed cloudImageURL: %q", cloudImageURL)
 
-	vmName := fmt.Sprintf("dtt-ubuntu-%s-%d", strings.Replace(release, ":", "-", -1), vmID)
+	vmName := fmt.Sprintf("dtt-%s-%d", strings.Replace(release, ":", "-", -1), vmID)
 	if *FlagVmCloudInitName != "" {
 		vmName = *FlagVmCloudInitName
 	}
@@ -191,7 +193,7 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 		fmt.Printf("generated cloud-init credentials: username %s password %s\n", *FlagVmCloudInitUsername, ciPassword)
 	}
 
-	log.Printf("configuring VM with boot drive, and cloud init parameters")
+	log.Printf("configuring VM %q ID %d with boot drive, and cloud init parameters", vm.Name, vm.VMID)
 	configTask, err := vm.Config(
 		ctx,
 		proxmox.VirtualMachineOption{Name: "scsi0", Value: fmt.Sprintf("%s:0,import-from=%s", *FlagVmCloudInitStorage, importVolID)},
@@ -224,13 +226,40 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("waiting for cloud-init VM start gave err: %w", err)
 	}
 
-	log.Printf("attempting to acquire ip through qemu agent")
-	ip, err := GetIPFor(ctx, vm, 10, 5*time.Second)
+	output, err := monitorVM(ctx, vm, 3*time.Second, 1*time.Minute)
 	if err != nil {
-		return fmt.Errorf("failed to acquire IP address for vm %q (%d)", vm.Name, vm.VMID)
+		return fmt.Errorf("failed to get cloudinit output for VM")
 	}
 
-	fmt.Printf("created and started cloud-init vm %d (%s) on node %s from %s, it's got IP %q\n", vmID, vmName, *FlagVmCloudInitNode, cloudImageURL, ip)
+	parsedOutput := parseCloudInitLog.ParseCloudInit(output)
+	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "FIELD\tVALUE")
+	fmt.Fprintln(tw, "-----\t-----")
+	fmt.Fprintf(tw, "Hostname\t%s\n", parsedOutput.Hostname)
+	if len(parsedOutput.IPs) == 0 {
+		fmt.Fprintln(tw, "IPs\t(none)")
+	} else {
+		fmt.Fprintf(tw, "IPs\t%s\n", strings.Join(parsedOutput.IPs, ", "))
+	}
+	fmt.Fprintf(tw, "Host Key Hashes\t%d\n", len(parsedOutput.HostKeyHashes))
+	for i, hk := range parsedOutput.HostKeyHashes {
+		fmt.Fprintf(
+			tw,
+			"  [%d] %s\t%s (%s, %s)\n",
+			i+1,
+			hk.KeyType,
+			hk.Fingerprint,
+			hk.Algorithm,
+			hk.Hostname,
+		)
+	}
+	fmt.Fprintf(tw, "Host Keys\t%d\n", len(parsedOutput.HostKeys))
+	for i, key := range parsedOutput.HostKeys {
+		fmt.Fprintf(tw, "  [%d]\t%s\n", i+1, key)
+	}
+	_ = tw.Flush()
+
+	fmt.Printf("created and started cloud-init vm %d (%s) on node %s from %s\n", vmID, vmName, *FlagVmCloudInitNode, cloudImageURL)
 	return nil
 }
 
