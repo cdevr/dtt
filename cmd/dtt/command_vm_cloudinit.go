@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"net"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"text/tabwriter"
@@ -26,17 +27,19 @@ var (
 		RunE:  command_vm_cloudinit,
 	}
 
-	FlagVmCloudInitNode          *string
-	FlagVmCloudInitName          *string
-	FlagVmCloudInitMemory        *int
-	FlagVmCloudInitCores         *int
-	FlagVmCloudInitStorage       *string
-	FlagVmCloudInitRelease       *string
-	FlagVmCloudInitDiskSize      *string
-	FlagVmCloudInitUsername      *string
-	FlagVmCloudInitPassword      *string
-	FlagVmCloudInitPool          *string
-	FlagVmCloudInitNetworkDevice *[]string
+	FlagVmCloudInitNode           *string
+	FlagVmCloudInitName           *string
+	FlagVmCloudInitMemory         *int
+	FlagVmCloudInitCores          *int
+	FlagVmCloudInitStorage        *string
+	FlagVmCloudInitRelease        *string
+	FlagVmCloudInitDiskSize       *string
+	FlagVmCloudInitUsername       *string
+	FlagVmCloudInitPassword       *string
+	FlagVmCloudInitSSHKey         *string
+	FlagVmCloudInitPool           *string
+	FlagVmCloudInitNetworkDevice  *[]string
+	FlagVmCloudInitLogMonitorFile *string
 )
 
 func init() {
@@ -51,8 +54,10 @@ func init() {
 	FlagVmCloudInitDiskSize = vmCloudInitCommand.PersistentFlags().String("disk-size", "+10G", "additional size for boot disk resize (e.g. +10G)")
 	FlagVmCloudInitUsername = vmCloudInitCommand.PersistentFlags().String("username", "dtt", "cloud-init username")
 	FlagVmCloudInitPassword = vmCloudInitCommand.PersistentFlags().String("password", "", "cloud-init password")
+	FlagVmCloudInitSSHKey = vmCloudInitCommand.PersistentFlags().String("sshkey", "", "cloud-init SSH public key")
 	FlagVmCloudInitPool = vmCloudInitCommand.PersistentFlags().String("pool", "", "resource pool to create the node in")
 	FlagVmCloudInitNetworkDevice = vmCloudInitCommand.PersistentFlags().StringArray("net", []string{"virtio,bridge=vmbr0"}, "network device options, for example you can add tag= for a VLAN tag. You can add none of these, or many")
+	FlagVmCloudInitLogMonitorFile = vmCloudInitCommand.PersistentFlags().String("monitorfile", "", "log VM monitor data to file")
 }
 
 var (
@@ -176,16 +181,23 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 	}
 
 	log.Printf("configuring VM %q ID %d with boot drive, and cloud init parameters", vm.Name, vm.VMID)
-	// TODO add an option that sets an SSH key that is passed in as a CLI argument.
-	configTask, err := vm.Config(
-		ctx,
+	configOpts := []proxmox.VirtualMachineOption{
 		proxmox.VirtualMachineOption{Name: "scsi0", Value: fmt.Sprintf("%s:0,import-from=%s", *FlagVmCloudInitStorage, importVolID)},
 		proxmox.VirtualMachineOption{Name: "boot", Value: "order=scsi0"},
 		proxmox.VirtualMachineOption{Name: "ide2", Value: fmt.Sprintf("%s:cloudinit", *FlagVmCloudInitStorage)},
 		proxmox.VirtualMachineOption{Name: "ciuser", Value: *FlagVmCloudInitUsername},
 		proxmox.VirtualMachineOption{Name: "cipassword", Value: ciPassword},
 		proxmox.VirtualMachineOption{Name: "ipconfig0", Value: "ip=dhcp,ip6=auto"},
-	)
+	}
+	if sshKey := strings.TrimSpace(*FlagVmCloudInitSSHKey); sshKey != "" {
+		enc := url.QueryEscape(sshKey)            // makes spaces into +
+		enc = strings.ReplaceAll(enc, "+", "%20") // turn the + encoded spaces into %20
+
+		log.Printf("passing in sshkeys %q", enc)
+
+		configOpts = append(configOpts, proxmox.VirtualMachineOption{Name: "sshkeys", Value: enc})
+	}
+	configTask, err := vm.Config(ctx, configOpts...)
 	if err != nil {
 		return fmt.Errorf("configuring cloud-init VM gave err: %w", err)
 	}
@@ -213,6 +225,11 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get cloudinit output for VM")
 	}
+	if *FlagVmCloudInitLogMonitorFile != "" {
+		if err := os.WriteFile(*FlagVmCloudInitLogMonitorFile, []byte(output), 0o644); err != nil {
+			return fmt.Errorf("failed to write monitor output to %q: %w", *FlagVmCloudInitLogMonitorFile, err)
+		}
+	}
 
 	parsedOutput := parseCloudInitLog.ParseCloudInit(output)
 	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
@@ -239,6 +256,26 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(tw, "Host Keys\t%d\n", len(parsedOutput.HostKeys))
 	for i, key := range parsedOutput.HostKeys {
 		fmt.Fprintf(tw, "  [%d]\t%s\n", i+1, key)
+	}
+	fmt.Fprintf(tw, "Authorized SSH Keys\t%d\n", len(parsedOutput.SSHKeyData))
+	if len(parsedOutput.SSHKeyData) == 0 {
+		fmt.Fprintln(tw, "  Users\t(none)")
+	} else {
+		for user, keyData := range parsedOutput.SSHKeyData {
+			fmt.Fprintf(tw, "  User\t%s\n", user)
+			fmt.Fprintf(tw, "    Key Type\t%s\n", keyData.Keytype)
+			fmt.Fprintf(tw, "    Fingerprint\t%s\n", keyData.FingerPrint)
+			if keyData.Options == "" {
+				fmt.Fprintln(tw, "    Options\t(none)")
+			} else {
+				fmt.Fprintf(tw, "    Options\t%s\n", keyData.Options)
+			}
+			if keyData.Comment == "" {
+				fmt.Fprintln(tw, "    Comment\t(none)")
+			} else {
+				fmt.Fprintf(tw, "    Comment\t%s\n", keyData.Comment)
+			}
+		}
 	}
 	_ = tw.Flush()
 

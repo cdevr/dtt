@@ -13,6 +13,7 @@ func TestParseCloudInit(t *testing.T) {
 		wantHost     string
 		wantMinIPs   int
 		wantIPs      []string
+		wantSshKeys  map[string]SSHKeyData
 		wantMinKeys  int
 		wantMinHash  int
 		skipComplete bool // files that are incomplete (no login prompt)
@@ -82,6 +83,26 @@ func TestParseCloudInit(t *testing.T) {
 			wantMinHash: 3,
 		},
 		{
+			name:       "Ubuntu Noble with ssh keys",
+			filepath:   "testdata/dtt-ubuntu-noble-cloudinit-with-sshkey.serial.txt",
+			wantHost:   "dtt-ubuntu-24",
+			wantMinIPs: 2,
+			wantIPs: []string{
+				"192.168.1.42",
+				"fe80::be24:11ff:fe47:b4f1/64",
+			},
+			wantSshKeys: map[string]SSHKeyData{
+				"dtt": {
+					Keytype:     "ssh-rsa",
+					FingerPrint: "0f:f4:bf:31:b8:42:b8:bd:ad:df:cb:c6:02:23:08:c8:93:be:0c:03:61:00:18:9a:6e:7c:7a:d0:2c:b2:5a:27",
+					Options:     "",
+					Comment:     "cde@shadow",
+				},
+			},
+			wantMinKeys: 3,
+			wantMinHash: 3,
+		},
+		{
 			name:       "Debian 13",
 			filepath:   "testdata/dtt-debian-13-109-cloudinit.serial.txt",
 			wantHost:   "dtt-debian-13-109",
@@ -133,6 +154,21 @@ func TestParseCloudInit(t *testing.T) {
 
 			if len(data.HostKeyHashes) < tt.wantMinHash {
 				t.Errorf("Got %d host key hashes, want at least %d", len(data.HostKeyHashes), tt.wantMinHash)
+			}
+			if len(tt.wantSshKeys) > 0 {
+				if len(data.SSHKeyData) != len(tt.wantSshKeys) {
+					t.Errorf("Got %d SSH key entries, want %d", len(data.SSHKeyData), len(tt.wantSshKeys))
+				}
+				for user, wantKey := range tt.wantSshKeys {
+					gotKey, ok := data.SSHKeyData[user]
+					if !ok {
+						t.Errorf("Missing SSH key entry for user %q", user)
+						continue
+					}
+					if gotKey != wantKey {
+						t.Errorf("SSH key entry for user %q = %+v, want %+v", user, gotKey, wantKey)
+					}
+				}
 			}
 
 			// Verify at least one IPv4 address

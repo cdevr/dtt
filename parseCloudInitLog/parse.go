@@ -1,8 +1,8 @@
 package parseCloudInitLog
 
 import (
-	"bytes"
 	"bufio"
+	"bytes"
 	"regexp"
 	"strings"
 )
@@ -13,6 +13,7 @@ type CloudInitData struct {
 	IPs           []string
 	HostKeyHashes []HostKeyHash
 	HostKeys      []string
+	SSHKeyData    map[string]SSHKeyData
 }
 
 // HostKeyHash represents an SSH host key fingerprint
@@ -23,12 +24,21 @@ type HostKeyHash struct {
 	Algorithm   string
 }
 
+type SSHKeyData struct {
+	Keytype     string
+	FingerPrint string
+	Options     string
+	Comment     string
+}
+
 var (
 	ipv4Regex     = regexp.MustCompile(`\|\s+eth0\s+\|\s+True\s+\|\s+(\d+\.\d+\.\d+\.\d+)\s+\|`)
 	ipv6Regex     = regexp.MustCompile(`\|\s+eth0\s+\|\s+True\s+\|\s+([0-9a-f:]+/\d+)\s+\|`)
 	hashRegex     = regexp.MustCompile(`(\d+)\s+(SHA256:[A-Za-z0-9+/]+)\s+root@(\S+)\s+\((\w+)\)`)
 	hostnameRegex = regexp.MustCompile(`(\S+)\s+login:\s*$`)
 	sshKeyRegex   = regexp.MustCompile(`^(ssh-\S+|ecdsa-\S+)\s+\S+\s+root@(\S+)`)
+	authKeyUser   = regexp.MustCompile(`^ci-info:\s+\+.*for user ([^+\s]+)\+`)
+	authKeyRow    = regexp.MustCompile(`^ci-info:\s+\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|`)
 )
 
 // ParseCloudInit parses cloud-init serial output and extracts VM configuration
@@ -37,10 +47,12 @@ func ParseCloudInit(content []byte) CloudInitData {
 		IPs:           []string{},
 		HostKeyHashes: []HostKeyHash{},
 		HostKeys:      []string{},
+		SSHKeyData:    map[string]SSHKeyData{},
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(content))
 	inHostKeys := false
+	currentAuthUser := ""
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -97,6 +109,33 @@ func ParseCloudInit(content []byte) CloudInitData {
 					if matches := sshKeyRegex.FindStringSubmatch(trimmed); matches != nil {
 						data.Hostname = matches[2]
 					}
+				}
+			}
+		}
+
+		// Extract authorized SSH key metadata for cloud-init users.
+		if matches := authKeyUser.FindStringSubmatch(line); matches != nil {
+			currentAuthUser = matches[1]
+			continue
+		}
+		if currentAuthUser != "" {
+			if strings.HasPrefix(line, "ci-info: +") {
+				continue
+			}
+			if matches := authKeyRow.FindStringSubmatch(line); matches != nil {
+				keytype := strings.TrimSpace(matches[1])
+				if strings.HasPrefix(keytype, "ssh-") || strings.HasPrefix(keytype, "ecdsa-") {
+					options := strings.TrimSpace(matches[3])
+					if options == "-" {
+						options = ""
+					}
+					data.SSHKeyData[currentAuthUser] = SSHKeyData{
+						Keytype:     keytype,
+						FingerPrint: strings.TrimSpace(matches[2]),
+						Options:     options,
+						Comment:     strings.TrimSpace(matches[4]),
+					}
+					currentAuthUser = ""
 				}
 			}
 		}
