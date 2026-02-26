@@ -96,28 +96,9 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("release cannot be empty")
 	}
 
-	distro := ""
-	version := ""
-	if strings.Contains(release, ":") {
-		parts := strings.SplitN(release, ":", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("this should not happen: %q split into %v", release, parts)
-		}
-		distro = parts[0]
-		version = parts[1]
-		log.Printf("distro: %q version: %q", distro, version)
-
-		// Allow identifying distros by version, e.g. "debian:11"
-		if distro, distroFound := distro_versions[distro]; !distroFound {
-			return fmt.Errorf("distro %q not found in list", distro)
-		} else {
-			for name, ver := range distro {
-				if version == ver {
-					version = name
-				}
-			}
-		}
-		log.Printf("distro: %q version: %q", distro, version)
+	distro, version, err := extractDistroVersionFromRelease(release)
+	if err != nil {
+		return err
 	}
 
 	cloudImageURL, err := getFnFromCloudImageURL(distro, version, release)
@@ -126,15 +107,11 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 	}
 	log.Printf("constructed cloudImageURL: %q", cloudImageURL)
 
-	vmName := fmt.Sprintf("dtt-%s-%d", strings.Replace(release, ":", "-", -1), vmID)
-	if *FlagVmCloudInitName != "" {
-		vmName = *FlagVmCloudInitName
-	}
-
 	qcow2Name, err := extractFn(cloudImageURL)
 	if err != nil {
 		return fmt.Errorf("failed to extract filename from URL %q", cloudImageURL)
 	}
+
 	// Needed for ubuntu minimal cloud images.
 	qcow2Name = strings.ReplaceAll(qcow2Name, ".img", ".qcow2")
 	importVolID := fmt.Sprintf("%s:import/%s", *FlagVmCloudInitStorage, qcow2Name)
@@ -146,6 +123,11 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 
 	if err := ensureImportImage(ctx, storage, qcow2Name, cloudImageURL); err != nil {
 		return fmt.Errorf("importing cloud image gave err: %w", err)
+	}
+
+	vmName := fmt.Sprintf("dtt-%s-%d", strings.Replace(release, ":", "-", -1), vmID)
+	if *FlagVmCloudInitName != "" {
+		vmName = *FlagVmCloudInitName
 	}
 
 	opts := []proxmox.VirtualMachineOption{
@@ -194,6 +176,7 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 	}
 
 	log.Printf("configuring VM %q ID %d with boot drive, and cloud init parameters", vm.Name, vm.VMID)
+	// TODO add an option that sets an SSH key that is passed in as a CLI argument.
 	configTask, err := vm.Config(
 		ctx,
 		proxmox.VirtualMachineOption{Name: "scsi0", Value: fmt.Sprintf("%s:0,import-from=%s", *FlagVmCloudInitStorage, importVolID)},
@@ -261,6 +244,33 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("created and started cloud-init vm %d (%s) on node %s from %s\n", vmID, vmName, *FlagVmCloudInitNode, cloudImageURL)
 	return nil
+}
+
+func extractDistroVersionFromRelease(release string) (string, string, error) {
+	distro := ""
+	version := ""
+	if strings.Contains(release, ":") {
+		parts := strings.SplitN(release, ":", 2)
+		if len(parts) != 2 {
+			return "", "", fmt.Errorf("this should not happen: %q split into %v", release, parts)
+		}
+		distro = parts[0]
+		version = parts[1]
+		log.Printf("distro: %q version: %q", distro, version)
+
+		// Allow identifying distros by version, e.g. "debian:11"
+		if distro, distroFound := distro_versions[distro]; !distroFound {
+			return "", "", fmt.Errorf("distro %q not found in list", distro)
+		} else {
+			for name, ver := range distro {
+				if version == ver {
+					version = name
+				}
+			}
+		}
+		log.Printf("distro: %q version: %q", distro, version)
+	}
+	return distro, version, nil
 }
 
 func GetIPFor(ctx context.Context, vm *proxmox.VirtualMachine, attempts int, delay time.Duration) (string, error) {
