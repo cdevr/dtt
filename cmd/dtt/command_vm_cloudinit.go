@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log"
@@ -11,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -19,6 +22,7 @@ import (
 	"github.com/cdevr/dtt/pkg/ssh"
 	"github.com/luthermonson/go-proxmox"
 	"github.com/spf13/cobra"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 var (
@@ -59,7 +63,7 @@ func init() {
 	FlagVmCloudInitDiskSize = vmCloudInitCommand.PersistentFlags().String("disk-size", "+10G", "additional size for boot disk resize (e.g. +10G)")
 	FlagVmCloudInitUsername = vmCloudInitCommand.PersistentFlags().String("username", "dtt", "cloud-init username")
 	FlagVmCloudInitPassword = vmCloudInitCommand.PersistentFlags().String("password", "", "cloud-init password")
-	FlagVmCloudInitSSHKey = vmCloudInitCommand.PersistentFlags().String("sshkey", "", "cloud-init SSH public key")
+	FlagVmCloudInitSSHKey = vmCloudInitCommand.PersistentFlags().String("sshkey", "generate", "cloud-init SSH public key (use 'generate' to auto-generate a key pair)")
 	FlagVmCloudInitPool = vmCloudInitCommand.PersistentFlags().String("pool", "", "resource pool to create the node in")
 	FlagVmCloudInitNetworkDevice = vmCloudInitCommand.PersistentFlags().StringArray("net", []string{"virtio,bridge=vmbr0"}, "network device options, for example you can add tag= for a VLAN tag. You can add none of these, or many")
 	FlagVmCloudInitLogMonitorFile = vmCloudInitCommand.PersistentFlags().String("monitorfile", "", "log VM monitor data to file")
@@ -89,6 +93,26 @@ var (
 func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	pac := getPACFromFlags()
+
+	// Handle SSH key generation
+	sshPublicKey := *FlagVmCloudInitSSHKey
+	sshPrivateKeyPath := *FlagVmCloudInitSSHPrivateKey
+	var sshKeyCleanup func()
+
+	if sshPublicKey == "generate" {
+		fmt.Println("generating SSH key pair...")
+		pubKey, privKeyPath, cleanup, err := generateSSHKeyPair()
+		if err != nil {
+			return fmt.Errorf("generating SSH key pair: %w", err)
+		}
+		sshKeyCleanup = cleanup
+		sshPublicKey = pubKey
+		sshPrivateKeyPath = privKeyPath
+		fmt.Printf("generated SSH key pair (private key: %s)\n", privKeyPath)
+	}
+	if sshKeyCleanup != nil {
+		defer sshKeyCleanup()
+	}
 
 	cluster, err := pac.Cluster(ctx)
 	if err != nil {
@@ -198,7 +222,7 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 		proxmox.VirtualMachineOption{Name: "cipassword", Value: ciPassword},
 		proxmox.VirtualMachineOption{Name: "ipconfig0", Value: "ip=dhcp,ip6=auto"},
 	}
-	if sshKey := strings.TrimSpace(*FlagVmCloudInitSSHKey); sshKey != "" {
+	if sshKey := strings.TrimSpace(sshPublicKey); sshKey != "" && sshKey != "generate" {
 		enc := url.QueryEscape(sshKey)            // makes spaces into +
 		enc = strings.ReplaceAll(enc, "+", "%20") // turn the + encoded spaces into %20
 
@@ -307,8 +331,8 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 			Port:     22,
 			Username: *FlagVmCloudInitUsername,
 		}
-		if privateKey := strings.TrimSpace(*FlagVmCloudInitSSHPrivateKey); privateKey != "" {
-			sshConfig.PrivateKey = privateKey
+		if sshPrivateKeyPath != "" {
+			sshConfig.PrivateKey = sshPrivateKeyPath
 		} else {
 			sshConfig.Password = ciPassword
 		}
@@ -321,7 +345,12 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 		}
 		defer sshClient.Close()
 
+		// Construct full remote path: if remote-path is a directory, append the binary filename
 		remotePath := *FlagVmCloudInitRemotePath
+		binaryName := filepath.Base(binaryPath)
+		if !strings.HasSuffix(remotePath, binaryName) {
+			remotePath = filepath.Join(remotePath, binaryName)
+		}
 		fmt.Printf("uploading binary %s to %s:%s...\n", binaryPath, vmIP, remotePath)
 		if err := sshClient.UploadFile(binaryPath, remotePath); err != nil {
 			return fmt.Errorf("failed to upload binary: %w", err)
@@ -510,4 +539,47 @@ func extractFn(rawURL string) (string, error) {
 		return "", err
 	}
 	return path.Base(parsed.Path), nil
+}
+
+// generateSSHKeyPair generates an Ed25519 SSH key pair and returns the public key string
+// and the path to the private key file. The private key is written to a temp file.
+func generateSSHKeyPair() (publicKey string, privateKeyPath string, cleanup func(), err error) {
+	// Generate Ed25519 key pair
+	pubKey, privKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("generating ed25519 key: %w", err)
+	}
+
+	// Convert public key to SSH format
+	sshPubKey, err := gossh.NewPublicKey(pubKey)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("converting public key to SSH format: %w", err)
+	}
+	publicKeyStr := strings.TrimSpace(string(gossh.MarshalAuthorizedKey(sshPubKey)))
+
+	// Create temp directory for the key
+	tempDir, err := os.MkdirTemp("", "dtt-ssh-*")
+	if err != nil {
+		return "", "", nil, fmt.Errorf("creating temp directory: %w", err)
+	}
+
+	cleanup = func() {
+		os.RemoveAll(tempDir)
+	}
+
+	// Marshal private key to OpenSSH format
+	privKeyBytes, err := gossh.MarshalPrivateKey(privKey, "")
+	if err != nil {
+		cleanup()
+		return "", "", nil, fmt.Errorf("marshaling private key: %w", err)
+	}
+
+	// Write private key to temp file
+	privateKeyPath = filepath.Join(tempDir, "id_ed25519")
+	if err := os.WriteFile(privateKeyPath, pem.EncodeToMemory(privKeyBytes), 0600); err != nil {
+		cleanup()
+		return "", "", nil, fmt.Errorf("writing private key: %w", err)
+	}
+
+	return publicKeyStr, privateKeyPath, cleanup, nil
 }
