@@ -17,8 +17,23 @@ A powerful CLI tool for running Linux binaries on Proxmox VMs with ease.
 
 ## Installation
 
+### Install from GitHub (recommended)
+
 ```bash
-cd /Users/cde/src/dtt
+go install github.com/cdevr/dtt/cmd/dtt@latest
+```
+
+### Run directly without installing
+
+```bash
+go run github.com/cdevr/dtt/cmd/dtt@latest [command]
+```
+
+### Install from source
+
+```bash
+git clone https://github.com/cdevr/dtt.git
+cd dtt
 go install ./cmd/dtt
 ```
 
@@ -28,19 +43,22 @@ go install ./cmd/dtt
 
 ```bash
 # Spin up a VM, upload a binary, execute it, and delete the VM when done
-dtt vm cloudinit --binary ./my-program --delete \
+go run github.com/cdevr/dtt/cmd/dtt@latest vm cloudinit \
+  --binary ./my-program --delete \
   --proxmox-host proxmox.example.com \
   --proxmox-user root@pam --release ubuntu:24.04
 ```
 
 This single command:
 1. Generates an ephemeral SSH key pair
-2. If needed, create a VM template for ubuntu:24.04 by downloading the ubuntu cloud image
-2. Creates an Ubuntu VM with cloud-init
-3. Waits for the VM to boot and get an IP
-4. Uploads your binary via SCP
-5. Executes the binary and prints output
-6. Deletes the VM when done
+2. Downloads the Ubuntu cloud image if needed
+3. Creates an Ubuntu VM with cloud-init
+4. Waits for the VM to boot and get an IP
+5. Uploads your binary via SCP
+6. Executes the binary and prints output
+7. Deletes the VM when done
+
+> **Note:** The examples below assume `dtt` is installed. You can substitute `dtt` with `go run github.com/cdevr/dtt/cmd/dtt@latest` to run without installing.
 
 ### Create a ubuntu:noble VM, execute your binary and see the boot output
 
