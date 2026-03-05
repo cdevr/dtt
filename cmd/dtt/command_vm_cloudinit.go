@@ -112,7 +112,7 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 		sshKeyCleanup = cleanup
 		sshPublicKey = pubKey
 		sshPrivateKeyPath = privKeyPath
-		fmt.Printf("generated SSH key pair (private key: %s)\n", privKeyPath)
+		log.Printf("generated SSH key pair (private key: %s)", privKeyPath)
 	}
 	if sshKeyCleanup != nil {
 		defer sshKeyCleanup()
@@ -336,7 +336,7 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 	}
 	_ = tw.Flush()
 
-	fmt.Printf("created and started cloud-init vm %d (%s) on node %s from %s\n", vmID, vmName, *FlagVmCloudInitNode, cloudImageURL)
+	log.Printf("created and started cloud-init VM %d (%s) on node %s\n", vmID, vmName, *FlagVmCloudInitNode)
 
 	// If a binary was specified, upload and execute it
 	if binaryPath := strings.TrimSpace(*FlagVmCloudInitBinary); binaryPath != "" {

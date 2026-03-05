@@ -67,7 +67,7 @@ dtt image list
 ### Download an image for faster provisioning
 
 ```bash
-dtt image download-template --release ubuntu:noble
+dtt image download-template ubuntu:noble
 ```
 
 ### Manage VMs
