@@ -33,14 +33,16 @@ func init() {
 }
 
 func monitorVM(ctx context.Context, vm *proxmox.VirtualMachine, maxSilence, timeout time.Duration) ([]byte, error) {
+	return monitorVMWithOutput(ctx, vm, maxSilence, timeout, false)
+}
+
+func monitorVMWithOutput(ctx context.Context, vm *proxmox.VirtualMachine, maxSilence, timeout time.Duration, printOutput bool) ([]byte, error) {
 	var result bytes.Buffer
 
 	term, err := vm.TermProxy(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("creating terminal proxy gave err: %w", err)
 	}
-	fmt.Printf("got termproxy response: %v", term)
-	fmt.Printf("Ticket is %s", term.Ticket)
 
 	wsConn, err := vm.TermWebSocketConn(term)
 	if err != nil {
@@ -74,6 +76,9 @@ func monitorVM(ctx context.Context, vm *proxmox.VirtualMachine, maxSilence, time
 		}
 
 		result.Write(msg)
+		if printOutput {
+			fmt.Print(string(msg))
+		}
 	}
 
 	return result.Bytes(), nil

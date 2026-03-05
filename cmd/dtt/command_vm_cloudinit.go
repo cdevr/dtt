@@ -49,6 +49,8 @@ var (
 	FlagVmCloudInitRemotePath     *string
 	FlagVmCloudInitBinaryArgs     *string
 	FlagVmCloudInitSSHPrivateKey  *string
+	FlagVmCloudInitVerboseBoot    *bool
+	FlagVmCloudInitDelete         *bool
 )
 
 func init() {
@@ -71,6 +73,8 @@ func init() {
 	FlagVmCloudInitRemotePath = vmCloudInitCommand.PersistentFlags().String("remote-path", "/tmp", "remote path to upload the binary to")
 	FlagVmCloudInitBinaryArgs = vmCloudInitCommand.PersistentFlags().String("args", "", "arguments to pass to the binary")
 	FlagVmCloudInitSSHPrivateKey = vmCloudInitCommand.PersistentFlags().String("ssh-private-key", "", "path to SSH private key for connecting to the VM (uses password auth if not specified)")
+	FlagVmCloudInitVerboseBoot = vmCloudInitCommand.PersistentFlags().Bool("verbose-boot", false, "print VM boot console output in real-time")
+	FlagVmCloudInitDelete = vmCloudInitCommand.PersistentFlags().Bool("delete", false, "delete the VM after completion (success or failure)")
 }
 
 var (
@@ -204,6 +208,26 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("getting cloud-init VM %d gave err: %w", vmID, err)
 	}
 
+	// Set up VM deletion if --delete flag is set
+	if *FlagVmCloudInitDelete {
+		defer func() {
+			fmt.Printf("deleting VM %d...\n", vmID)
+			// Stop the VM first if it's running
+			if stopTask, err := vm.Stop(ctx); err == nil {
+				_ = stopTask.Wait(ctx, time.Second, 30*time.Second)
+			}
+			if deleteTask, err := vm.Delete(ctx); err != nil {
+				fmt.Printf("warning: failed to delete VM %d: %v\n", vmID, err)
+			} else {
+				if err := deleteTask.Wait(ctx, time.Second, 30*time.Second); err != nil {
+					fmt.Printf("warning: failed waiting for VM %d deletion: %v\n", vmID, err)
+				} else {
+					fmt.Printf("VM %d deleted\n", vmID)
+				}
+			}
+		}()
+	}
+
 	ciPassword := *FlagVmCloudInitPassword
 	if strings.TrimSpace(ciPassword) == "" {
 		ciPassword, err = GenerateEasyPassword(3)
@@ -254,7 +278,7 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("waiting for cloud-init VM start gave err: %w", err)
 	}
 
-	output, err := monitorVM(ctx, vm, 3*time.Second, 1*time.Minute)
+	output, err := monitorVMWithOutput(ctx, vm, 3*time.Second, 1*time.Minute, *FlagVmCloudInitVerboseBoot)
 	if err != nil {
 		return fmt.Errorf("failed to get cloudinit output for VM")
 	}
