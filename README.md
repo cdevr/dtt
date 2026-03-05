@@ -4,13 +4,16 @@ A powerful CLI tool for running Linux binaries on Proxmox VMs with ease.
 
 ## Features
 
-- **Binary Execution**: Upload and run Linux binaries on Proxmox VMs
-- **Image Management**: Automatic image download and caching (Debian 11, 13, Ubuntu 24.04 LTS)
+- **One-Command Workflows**: Spin up a VM, run your binary, and clean up in a single command
+- **Automatic SSH Key Generation**: Ephemeral Ed25519 keys generated per-session for secure access
+- **Binary Execution**: Upload and run Linux binaries on Proxmox VMs via SCP/SSH
+- **Image Management**: Automatic image download and caching (Debian 10-13, Ubuntu 16.04-24.04)
 - **Cloud-Init Support**: Automatic VM configuration via cloud-init
-- **VM Management**: Create, list, and delete VMs
+- **Live Boot Output**: Stream VM console output in real-time with `--verbose-boot`
+- **Ephemeral VMs**: Auto-delete VMs after execution with `--delete`
+- **VM Management**: Full lifecycle management (create, start, stop, delete, monitor)
 - **Library API**: Use DTT as a library in your own Go programs
 - **Bash/Zsh Completion**: Full shell completion support
-- **Well-Tested**: Comprehensive unit tests across all packages
 
 ## Installation
 
@@ -21,17 +24,37 @@ go install ./cmd/dtt
 
 ## Quick Start
 
-### Run a binary on a Proxmox VM
+### Create a VM and run a binary (fully automated)
 
 ```bash
-dtt run /path/to/binary 100 \
-  --hostname my-vm \
-  --image debian-11 \
-  --memory 2048 \
-  --cpu 2 \
-  --cores 1 \
+# Spin up a VM, upload a binary, execute it, and delete the VM when done
+dtt vm cloudinit --binary ./my-program --delete \
   --proxmox-host proxmox.example.com \
   --proxmox-user root@pam
+```
+
+This single command:
+1. Generates an ephemeral SSH key pair
+2. Creates an Ubuntu VM with cloud-init
+3. Waits for the VM to boot and get an IP
+4. Uploads your binary via SCP
+5. Executes the binary and prints output
+6. Deletes the VM when done
+
+### Create a VM with verbose boot output
+
+```bash
+dtt vm cloudinit --verbose-boot --binary ./my-program \
+  --proxmox-host proxmox.example.com
+```
+
+### Use your own SSH key
+
+```bash
+dtt vm cloudinit \
+  --sshkey "$(cat ~/.ssh/id_rsa.pub)" \
+  --ssh-private-key ~/.ssh/id_rsa \
+  --binary ./my-program
 ```
 
 ### List available images
@@ -54,6 +77,9 @@ dtt vm list
 
 # Delete a VM
 dtt vm delete 100
+
+# Monitor VM console output
+dtt vm monitor 100
 ```
 
 ## Configuration
@@ -104,6 +130,51 @@ Manage virtual machines.
 **Subcommands**:
 - `list`: List all VMs on the node
 - `delete`: Delete a VM
+- `cloudinit`: Create a cloud-init VM and optionally run a binary
+- `start`, `stop`, `restart`, `shutdown`, `reset`: VM power management
+- `monitor`: Stream VM console output
+- `get`: Get VM details
+
+### dtt vm cloudinit
+
+Create a VM from a cloud image with cloud-init configuration, optionally upload and execute a binary.
+
+**Usage**: `dtt vm cloudinit [flags]`
+
+**Flags**:
+- `--node`: Proxmox node name (default: pve)
+- `--name`: VM name (default: auto-generated)
+- `--release`: OS release, e.g., ubuntu:noble, debian:bookworm (default: ubuntu:noble)
+- `--memory`: Memory in MB (default: 2048)
+- `--cores`: CPU cores (default: 2)
+- `--disk-size`: Additional disk size (default: +10G)
+- `--storage`: Storage location (default: local)
+- `--username`: Cloud-init username (default: dtt)
+- `--password`: Cloud-init password (auto-generated if not set)
+- `--sshkey`: SSH public key or "generate" for auto-generation (default: generate)
+- `--ssh-private-key`: Path to SSH private key for connecting
+- `--binary`: Local binary/script to upload and execute
+- `--remote-path`: Remote path for binary (default: /tmp)
+- `--args`: Arguments to pass to the binary
+- `--verbose-boot`: Print VM boot console output in real-time
+- `--delete`: Delete the VM after completion (success or failure)
+- `--net`: Network device options (can specify multiple)
+- `--pool`: Resource pool for the VM
+
+**Examples**:
+```bash
+# Minimal: create VM with auto-generated SSH key
+dtt vm cloudinit
+
+# Run a binary and clean up
+dtt vm cloudinit --binary ./test-program --delete
+
+# Watch boot process and run a script
+dtt vm cloudinit --verbose-boot --binary ./setup.sh --args "--config prod"
+
+# Use Debian instead of Ubuntu
+dtt vm cloudinit --release debian:bookworm --binary ./my-app
+```
 
 ### dtt completion
 
