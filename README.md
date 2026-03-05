@@ -30,22 +30,23 @@ go install ./cmd/dtt
 # Spin up a VM, upload a binary, execute it, and delete the VM when done
 dtt vm cloudinit --binary ./my-program --delete \
   --proxmox-host proxmox.example.com \
-  --proxmox-user root@pam
+  --proxmox-user root@pam --release ubuntu:24.04
 ```
 
 This single command:
 1. Generates an ephemeral SSH key pair
+2. If needed, create a VM template for ubuntu:24.04 by downloading the ubuntu cloud image
 2. Creates an Ubuntu VM with cloud-init
 3. Waits for the VM to boot and get an IP
 4. Uploads your binary via SCP
 5. Executes the binary and prints output
 6. Deletes the VM when done
 
-### Create a VM with verbose boot output
+### Create a ubuntu:noble VM, execute your binary and see the boot output
 
 ```bash
 dtt vm cloudinit --verbose-boot --binary ./my-program \
-  --proxmox-host proxmox.example.com
+  --proxmox-host proxmox.example.com --release ubuntu:noble
 ```
 
 ### Use your own SSH key
@@ -66,7 +67,7 @@ dtt image list
 ### Download an image for faster provisioning
 
 ```bash
-dtt image download "Debian 11" --storage local
+dtt image download-template --release ubuntu:noble
 ```
 
 ### Manage VMs
