@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cdevr/dtt/parseCloudInitLog"
+	"github.com/cdevr/dtt/pkg/ssh"
 	"github.com/luthermonson/go-proxmox"
 	"github.com/spf13/cobra"
 )
@@ -40,6 +41,10 @@ var (
 	FlagVmCloudInitPool           *string
 	FlagVmCloudInitNetworkDevice  *[]string
 	FlagVmCloudInitLogMonitorFile *string
+	FlagVmCloudInitBinary         *string
+	FlagVmCloudInitRemotePath     *string
+	FlagVmCloudInitBinaryArgs     *string
+	FlagVmCloudInitSSHPrivateKey  *string
 )
 
 func init() {
@@ -58,6 +63,10 @@ func init() {
 	FlagVmCloudInitPool = vmCloudInitCommand.PersistentFlags().String("pool", "", "resource pool to create the node in")
 	FlagVmCloudInitNetworkDevice = vmCloudInitCommand.PersistentFlags().StringArray("net", []string{"virtio,bridge=vmbr0"}, "network device options, for example you can add tag= for a VLAN tag. You can add none of these, or many")
 	FlagVmCloudInitLogMonitorFile = vmCloudInitCommand.PersistentFlags().String("monitorfile", "", "log VM monitor data to file")
+	FlagVmCloudInitBinary = vmCloudInitCommand.PersistentFlags().String("binary", "", "local binary to upload and execute on the VM")
+	FlagVmCloudInitRemotePath = vmCloudInitCommand.PersistentFlags().String("remote-path", "/tmp", "remote path to upload the binary to")
+	FlagVmCloudInitBinaryArgs = vmCloudInitCommand.PersistentFlags().String("args", "", "arguments to pass to the binary")
+	FlagVmCloudInitSSHPrivateKey = vmCloudInitCommand.PersistentFlags().String("ssh-private-key", "", "path to SSH private key for connecting to the VM (uses password auth if not specified)")
 }
 
 var (
@@ -280,6 +289,69 @@ func command_vm_cloudinit(cmd *cobra.Command, args []string) error {
 	_ = tw.Flush()
 
 	fmt.Printf("created and started cloud-init vm %d (%s) on node %s from %s\n", vmID, vmName, *FlagVmCloudInitNode, cloudImageURL)
+
+	// If a binary was specified, upload and execute it
+	if binaryPath := strings.TrimSpace(*FlagVmCloudInitBinary); binaryPath != "" {
+		if len(parsedOutput.IPs) == 0 {
+			return fmt.Errorf("cannot upload binary: no IP address found for VM")
+		}
+		vmIP := parsedOutput.IPs[0]
+
+		// Validate the binary exists and is executable
+		if _, err := os.Stat(binaryPath); err != nil {
+			return fmt.Errorf("binary not found: %w", err)
+		}
+
+		sshConfig := ssh.Config{
+			Host:     vmIP,
+			Port:     22,
+			Username: *FlagVmCloudInitUsername,
+		}
+		if privateKey := strings.TrimSpace(*FlagVmCloudInitSSHPrivateKey); privateKey != "" {
+			sshConfig.PrivateKey = privateKey
+		} else {
+			sshConfig.Password = ciPassword
+		}
+
+		sshClient := ssh.NewClient(sshConfig)
+
+		fmt.Printf("waiting for SSH to become available on %s...\n", vmIP)
+		if err := sshClient.WaitForConnection(30, 5*time.Second); err != nil {
+			return fmt.Errorf("SSH connection failed: %w", err)
+		}
+		defer sshClient.Close()
+
+		remotePath := *FlagVmCloudInitRemotePath
+		fmt.Printf("uploading binary %s to %s:%s...\n", binaryPath, vmIP, remotePath)
+		if err := sshClient.UploadFile(binaryPath, remotePath); err != nil {
+			return fmt.Errorf("failed to upload binary: %w", err)
+		}
+
+		// Make the binary executable
+		if _, err := sshClient.Execute(fmt.Sprintf("chmod +x %s", remotePath)); err != nil {
+			return fmt.Errorf("failed to make binary executable: %w", err)
+		}
+
+		// Execute the binary
+		execCmd := remotePath
+		if args := strings.TrimSpace(*FlagVmCloudInitBinaryArgs); args != "" {
+			execCmd = fmt.Sprintf("%s %s", remotePath, args)
+		}
+		fmt.Printf("executing: %s\n", execCmd)
+		output, err := sshClient.Execute(execCmd)
+		if err != nil {
+			fmt.Printf("binary execution failed: %v\n", err)
+			if output != "" {
+				fmt.Printf("output:\n%s\n", output)
+			}
+			return err
+		}
+		fmt.Printf("binary executed successfully\n")
+		if output != "" {
+			fmt.Printf("output:\n%s\n", output)
+		}
+	}
+
 	return nil
 }
 
